@@ -16,6 +16,7 @@ typedef struct request{
     msgType type;
     int fd; //어느 소켓으로부터 온 요청인지
     u_int id; //대상이 되는 데이터 id
+    int seq;
 } request;
 
 typedef struct cmpOnlyFirst {
@@ -25,34 +26,46 @@ typedef struct cmpOnlyFirst {
 } cmpOnlyFirst;
 
 typedef struct reqTableNode{
-    int fd; //reqLock을 보냈던 fd
+    //reqLock을 보냈던 fd, -1이라면 이 노드가 근원지
+    int fd;
+    //reqLock의 전송 여부
+    bool sent;
 } reqTableNode;
 
 typedef enum state{
     unLocked = 0, //lock 없음, 대기중인 allowLock도 없음
     waitFor, //allowLock을 대기중
-    locked, //locked
-    waitForLock //lock을 요청한 최초의 노드
+    locked //locked
 } state;
 
 typedef struct lockTableNode{
     state state; //lock여부
     int fd; //lock메시지를 보냈던 fd
+    int allowCnt; //lock이 성립되기 위한 allow의 필요 갯수
 } lockTableNode;
 
 class node{
     private:
     bool isRoot; //root노드 여부(부모없음)
     scManage scm; //소켓 관련 기능 종합
-    priority_queue<pair<time_t, request>, vector<pair<time_t, request>>, cmpOnlyFirst> reqQ; //lockReq에 대한 요청 큐, <타임스탬프, request>, vector와 greater는 큐를 오름차순으로 정렬하기 위함
-    deque<priority_queue<pair<time_t, reqTableNode>, vector<pair<time_t, reqTableNode>>, cmpOnlyFirst>> reqTable; //데이터에 대한 lockTable, Data_i의 reqLock정보는 reqTable[i], 향후 hash table로 변경할 것 고려
-    deque<lockTableNode> lockTable; //데이터에 대한 lockTable, Data_i의 lock정보는 lockTable[i], 향후 hash table로 변경할 것 고려
+    //lockReq에 대한 요청 큐, <타임스탬프, request>
+    //vector와 greater는 큐를 오름차순으로 정렬하기 위함
+    priority_queue<pair<time_t, request*>, vector<pair<time_t, request*>>, cmpOnlyFirst> reqQ;
+    //데이터에 대한 lockTable, Data_i의 reqLock정보는 reqTable[i]
+    //향후 hash table로 변경할 것 고려
+    deque<priority_queue<pair<time_t, reqTableNode*>, vector<pair<time_t, reqTableNode*>>, cmpOnlyFirst>> reqTable;
+    //데이터에 대한 lockTable, Data_i의 lock정보는 lockTable[i]
+    deque<lockTableNode> lockTable;
     int handleReq();
+    int handleReqLock(time_t timeStamp, const request* req);
+    int handleAllowLock(const request* req);
+    int handleNotifyUnlock(const request* req);
 
     public:
     node(const char* inputParentIp, int parentPort, int myPort);
     int handleMsg(msgType type, const char* msg, int srcFd); //다른 노드로부터 온 메시지를 requset구조체로 변경하여 enque
-    int reqLock(u_int id, int exceptSocket); //주어진 소켓을 제외하고 lock요청
-    int allowLock(u_int id, int socket); //주어진 소켓에게 lock허용
-    int notifyUnlock(u_int id, int exceptSocket); //주어진 소켓을 제외하고 unlock통보
+    int reqLock_broad(u_int id, int exceptSocket, time_t timeStamp); //주어진 소켓을 제외하고 lock요청, exceptSocket = -1 이라면 broadcast
+    int reqLock_target(u_int id, int socket, time_t timeStamp); //reqLock을 특정 소켓에게만
+    int allowLock_target(u_int id, int socket); //주어진 소켓에게 lock허용
+    int notifyUnlock_broad(u_int id, int exceptSocket); //주어진 소켓을 제외하고 unlock통보, exceptSocket = -1 이라면 broadcast
 };

@@ -5,6 +5,7 @@ using namespace std;
 scManage::scManage(int inputSrvPort){
     this->srvPort=inputSrvPort;
     this->srvFd=newSrv(this->srvPort);
+    this->parentFd=0; //부모를 따로 연결하지 않으면 0, root라는 의미
     /*
     startAccept를 별도 스레드로 수행
     */
@@ -97,7 +98,7 @@ int scManage::broadcast(const char* msg, int size, list<int> fds){
 
 int scManage::spreadMsg(const char* msg, int size, int srcFd){
     if(srcFd == parentFd){ // 부모노드로부터 온 메시지
-        broadcast(msg, size, childFds); //모든 자식노드에게 전파
+        return broadcast(msg, size, childFds); //모든 자식노드에게 전파
     }
     else{ //부모노드가 아님
         for(int i = 0; i < childFds.size(); i++) //srcFd가 아닌 모든 자식노드에게 전파
@@ -105,11 +106,13 @@ int scManage::spreadMsg(const char* msg, int size, int srcFd){
                 perror("write");
                 return -1;
             }
-        if(write(parentFd, msg, size) < 0){ //부모노드에게 전파
+        if(parentFd && write(parentFd, msg, size) < 0){ //부모노드 존재 && 부모노드에게 전파
             perror("write");
             return -1;
         }
+
+        return 1;
     }
 
-    return 0;
+    return -1;
 }
