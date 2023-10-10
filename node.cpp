@@ -1,14 +1,41 @@
 #include"node.h"
 #include"communicate.h"
 
-int node::handleReqLock(time_t timeStamp, const request* req){
-    //다른 노드 어딘가에 우선순위가 높은 reqLock이 발생했다면
-    //현재 노드가 locked상태가 되는 것은 불가능하다.
-    //우선순위가 높은 reqLock을 가진 노드에서 현재 lock된 req에 대해
-    //allow해줄 수 없기때문이다.
+int node::discountAllowCnt(int id){
+    if(lockTable.at(id).allowCnt <= 0){ //allowCnt는 이미 0이거나 그보다 작음
+        return -1;
+    }
+    //allowCnt 업데이트
+    lockTable.at(id).allowCnt -= 1;
     
-    //psuh이전 최우선순위 req
+    if(lockTable.at(id).allowCnt > 0){ //해당 id는 기다리던 allow가 있음
+        return lockTable.at(id).allowCnt;
+    }
+    else if(lockTable.at(id).allowCnt == 0){ //모든 allow 수신됨
+        //최우선 req
+        reqTableNode* topReq = reqTable.at(req->id).top().second;
+        if(topReq->fd == -1){ //본인이 요청한 request가 allow됨
+            /*해당 노드에서 lock 취득*/
+            //해당 id의 데이터에 lock
+            lockTable.at(id).state = locked;
+        }
+        else{
+            //해당 req를 전송한 노드에게 allow
+            allowLock_target(id, topReq->fd);
+        }
+        //해당 req 제거
+        reqTable.at(id).pop();
+        free(topReq);
+        return 0;
+    }
+
+    return -1; //도달 불가
+}
+
+int node::handleReqLock(time_t timeStamp, const request* req){
+    //psuh이전 최우선순위 req*, timeStamp
     reqTableNode* oldTop = reqTable.at(req->id).top().second;
+    time_t oldTimeStamp = reqTable.at(req->id).top().first;
     //reqTable에 추가될 노드 생성
     reqTableNode* newReq = malloc(sizeof(reqTableNode));
     newReq->fd = req->fd;
@@ -19,22 +46,47 @@ int node::handleReqLock(time_t timeStamp, const request* req){
     //해당 id의 락 상태
     int state = lockTable.at(req->id).state;
 
+    //다른 노드 어딘가에 우선순위가 높은 reqLock이 발생했다면
+    //현재 노드가 locked상태가 되는 것은 불가능하다.
+    //우선순위가 높은 reqLock을 가진 노드에서 현재 lock된 req에 대해
+    //allow해줄 수 없기때문이다.
+    if(state == locked){
+        fprintf(stderr, "E: got reqLock but this node is locked\n");
+        return -1;
+    }
     //state==unLocked, 대기중인 req조차 없음
-    if(state == unLocked){
+    else if(state == unLocked){
         //state을 변경하고 reqLock메시지 전파
         lockTable.at(req->id).state = waitFor;
-        newReq->sent = 1;
-        lockTable.at(req->id).allowCnt = reqLock(req->id, req->fd, timeStamp);
+        //reqLock을 전파받은 노드의 갯수
+        int spreadCnt = reqLock(req->id, req->fd, timeStamp);
+        if(spreadCnt){
+            //allowCnt설정
+            lockTable.at(req->id).allowCnt = spreadCnt;
+        }
+        //reqLock을 전파받은 노드가 없음
+        else{
+            //reqLock을 전송한 노드에게 즉시 allow
+            allowLock_target(req->id, req->fd);
+        }
     }
-    //대기중인 req가 있지만 새로운 req가 최우선순위
-    else if(state == waitFor && reqTable.at(req->id).top().second == newReq){
-        //기존 req의 allow를 새로운 req가 대신 받음
-        //reqLock메시지 전파
-        newReq->sent = 1;
-        //기존 req의 sent false, 이 req는 향후 다시 전송되어야함
-        oldTop->sent = 0;
-        //기존 req에게는 reqLock이 안갔으므로 reqLock전송
-        reqLock_target(req->id, oldTop->fd, timeStamp);
+    else if(state == waitFor){
+        //allow를 대기중인 req가 있지만 새로운 req가 최우선순위
+        if(reqTable.at(req->id).top().second == newReq){
+            //기존 req의 allow를 새로운 req가 대신 받음
+            //다른 req의 자리를 빼았았음을 표시
+            newReq->steal = 1;
+            //top을 빼았긴 req의 timeStamo를 newReq에 저장
+            newReq->stolenTimeStamp = oldTimeStamp;
+            //기존 req를 전송한 노드에게는 새로운 reqLock이 안갔으므로 reqLock전송
+            reqLock_target(req->id, oldTop->fd, timeStamp);
+        }
+        //현재 topReq는 다른 req의 자리를 빼았은 자리임 && 새로운 req가 top을 빼았긴 req보다 우선순위 높음
+        //이경우 oldTop은 현재의 top이기도 함
+        //top이 newReq가 아니라는 것으로 현재 top인 req보다 우선순위가 낮다는 것이 보장
+        else if(oldTop->steal && oldTop->stolenTimeStamp > timeStamp){
+            discountAllowCnt(req->id);
+        }
     }
 
     return 0;
@@ -46,28 +98,8 @@ int node::handleAllowLock(const request* req){
         return -1;
     }
 
-    if(lockTable.at(req->id).allowCnt > 0){ //해당 id는 기다리던 allow가 있음
-        //allowCnt 업데이트
-        lockTable.at(req->id).allowCnt -= 1;
-    }
-
-    if(lockTable.at(req->id).allowCnt == 0){ //모든 allow 수신됨
-        //최우선 req
-        reqTableNode* topReq = reqTable.at(req->id).top().second;
-        if(topReq->fd == -1){ //본인이 요청한 request가 allow됨
-            /*해당 노드에서 lock 취득*/
-            //해당 id의 데이터에 lock
-            lockTable.at(req->id).state = locked;
-        }
-        else{
-            //해당 req를 전송한 노드에게 allow
-            allowLock_target(req->id, topReq->fd);
-        }
-        //해당 req 제거
-        free(topReq);
-        reqTable.at(req->id).pop();
-    }
-
+    discountAllowCnt(req->id);
+    
     return 0;
 }
 
@@ -101,7 +133,6 @@ int node::handleReq(){
     //cpp의 priority queue에서 pop은 데이터를 리턴하지 않음
     time_t timeStamp = reqQ.top().first; //타임스탬프
     request* req = reqQ.top().second; //최우선 request
-    reqQ.pop();
 
     switch(req.type){
         case t_reqLock: handleReqLock(timeStamp, (const request*)req); break;
@@ -110,6 +141,8 @@ int node::handleReq(){
     }
 
     //마무리
+    reqQ.pop();
+    free(req);
     return 0;
 }
 
