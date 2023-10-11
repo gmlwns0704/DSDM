@@ -6,7 +6,7 @@
 typedef enum msgType{
     t_reqLock = 0, //
     t_allowLock, //
-    t_notifyUnlock
+    t_update
 } msgType;
     
 typedef struct msgHeader{
@@ -23,6 +23,8 @@ typedef struct msgAllowLock{ //단순한 메시지의 재전파만 이루어지�
     u_int id;
 } msgAllowLock;
 
-typedef struct msgNotifyUnlock{ //단순한 메시지의 재전파만 이루어지므로 타임스탬프X
+typedef struct msgUpdate{ //값의 업데이트
     u_int id;
-} msgNotifyUnlock;
+    u_int size; //뒤에 따라붙을 update된 데이터의 크기
+    /*updated 값은 별도로 이어붙임, 사실상 헤더*/
+}

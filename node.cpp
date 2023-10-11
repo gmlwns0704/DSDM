@@ -1,6 +1,8 @@
 #include"node.h"
 #include"communicate.h"
 
+/*private*/
+
 int node::discountAllowCnt(int id){
     if(lockTable.at(id).allowCnt <= 0){ //allowCnt는 이미 0이거나 그보다 작음
         return -1;
@@ -18,6 +20,8 @@ int node::discountAllowCnt(int id){
             /*해당 노드에서 lock 취득*/
             //해당 id의 데이터에 lock
             lockTable.at(id).state = locked;
+            //mtx를 unlock해서 사용자가 마침내 데이터에 접근 가능
+            pthread_mutex_unlock(lockTable.at(id).mtx);
         }
         else{
             //해당 req를 전송한 노드에게 allow
@@ -103,32 +107,6 @@ int node::handleAllowLock(const request* req){
     return 0;
 }
 
-int node::handleNotifyUnlock(const request* req){
-    if(lockTable.at(req->id).state != locked){ //state이 locked가 아닌데 unlock이 왔음, 오류
-        fprintf(stderr, "E: got otifyUnlock but not locked\n");
-        return -1;
-    }
-
-    if(!isRoot && scm.childFds.size()){ // not root and not leaf
-        notifyUnlock(req->id, req->fd); //notifyUnlock전파
-    }
-
-    //reqTable, lockTable수정
-    if(!(reqTable.at(req->id).size())){ //대기중이던 reqLock이 없음
-        lockTable.at(req->id).state = unLocked;
-    }
-    else{ //대기중이던 reqLock 존재
-        reqTableNode *nextReq = reqTable.at(req->id).top; //다음 reqLock 받아오기
-        reqTable.at(req->id).pop(); //reqTable pop
-        lockTable.at(req->id).state = waitFor; //상태를 waitFor로 변경
-        reqLock(req->id, nextReq->fd); //다음 reqLock전파
-        free(nextReq);
-    }
-
-    return 0;
-}
-
-/*private*/
 int node::handleReq(){
     //cpp의 priority queue에서 pop은 데이터를 리턴하지 않음
     time_t timeStamp = reqQ.top().first; //타임스탬프
@@ -137,22 +115,12 @@ int node::handleReq(){
     switch(req.type){
         case t_reqLock: handleReqLock(timeStamp, (const request*)req); break;
         case t_allowLock: handleAllowLock((const request*)req); break;
-        case t_notifyUnlock: handleNotifyUnlock((const request*)req); break;
     }
 
     //마무리
     reqQ.pop();
     free(req);
     return 0;
-}
-
-/*public*/
-node::node(const char* inputParentIp, int parentPort, int myPort){
-    this->scm=new scManage(myPort); //소켓매니저 인스턴스 생성
-    this->isRoot=(!inputParentIp); //루트노드 여부 결정(inputParentIp가 NULL이라면 루트노드)
-    if(!(this->isRoot)){//루트가 아니라면 부모노드에 연결
-        this->scm.connectParent(inputParentIp, parentPort);
-    }
 }
 
 int node::handleMsg(msgType type, const char* msg, int srcFd){
@@ -168,20 +136,22 @@ int node::handleMsg(msgType type, const char* msg, int srcFd){
         case t_reqLock:{
             req.id = *((msgReqLock*)msg)->id;
             timeStamp = *((msgReqLock*)msg)->t;
-        }
-        case t_allowLock:{
-            req.id = *((msgAllowLock*)msg)->id;
+            // 해당 request를 타임스탬프와 함께 저장
+            reqQ.push({timeStamp, req});
         }
         break;
-        case t_notifyUnlock:{
-            req.id = *((msgNotifyUnlock*)msg)->id;
+        case t_allowLock:{
+            req.id = *((msgAllowLock*)msg)->id;
+            // 해당 request를 타임스탬프와 함께 저장
+            reqQ.push({timeStamp, req});
+        }
+        break;
+        case t_update:{
+            //값 업데이트
         }
         default:
         break;
     }
-
-    // 해당 request를 타임스탬프와 함께 저장
-    reqQ.push({timeStamp, req});
     return 0;
 }
 
@@ -253,4 +223,34 @@ int node::notifyUnlock_broad(u_int id, int exceptSocket){
 
     // 메시지 뿌리기
     return scm.spreadMsg(msg, size, exceptSocket);
+}
+
+int node::addData(u_int id, u_int size){
+
+}
+
+/*public*/
+node::node(const char* inputParentIp, int parentPort, int myPort){
+    this->scm=new scManage(myPort); //소켓매니저 인스턴스 생성
+    this->isRoot=(!inputParentIp); //루트노드 여부 결정(inputParentIp가 NULL이라면 루트노드)
+    if(!(this->isRoot)){//루트가 아니라면 부모노드에 연결
+        this->scm.connectParent(inputParentIp, parentPort);
+    }
+}
+
+int node::acquireLock(u_int id){
+    if(lockTable.at(id).state == locked){
+        fprintf(stderr, "E: this id is already locked\n");
+        return -1;
+    }
+
+    time_t timsStamp = time(NULL); //현재 시간
+    reqTableNode* newReq = malloc(sizeof(reqTableNode)); //새로 push될 req
+    newReq->fd = -1; //이 노드에서 시작됐음을 알림
+
+    reqTable.at(id).push({timsStamp, newReq}); //reqTable에 push
+
+    //lockTable이 locked state이 되고 mtx를 unlock할때까지 대기
+    pthread_mutex_t* mtx = lockTable.at(id).mtx;
+    pthread_mutex_lock(mtx);
 }

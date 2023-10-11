@@ -3,12 +3,15 @@
 #include<stdlib.h>
 #include<string.h>
 #include<arpa/inet.h>
+#include<pthread.h>
 
 #include<string>
 #include<iostream>
 #include<queue>
+
 #include"scManage.h"
 #include"communicate.h"
+#include"shareData.h"
 
 using namespace std;
 
@@ -44,6 +47,7 @@ typedef struct lockTableNode{
     state state; //lock여부
     int fd; //lock메시지를 보냈던 fd
     int allowCnt; //lock이 성립되기 위한 allow의 필요 갯수
+    pthread_mutex_t* mtx; //이 노드에서 해당 데이터의 lock을 관리하기 위한 노드
 } lockTableNode;
 
 class node{
@@ -58,18 +62,25 @@ class node{
     deque<priority_queue<pair<time_t, reqTableNode*>, vector<pair<time_t, reqTableNode*>>, cmpOnlyFirst>> reqTable;
     //데이터에 대한 lockTable, Data_i의 lock정보는 lockTable[i]
     deque<lockTableNode> lockTable;
+    //공유되는 데이터 목록
+    deque<shareData*> dataTable;
+
     int discountAllowCnt(int id) //allowCnt를 1 감소시키고 결과값에 따른 적절한 대응까지
+    
     int handleReq(); //reqQ에서 다음 req를 처리
     int handleReqLock(time_t timeStamp, const request* req); //reqLock req에 대해서 적절한 대응
     int handleAllowLock(const request* req); //allowLock req에 대해서 적절한 대응
-    int handleNotifyUnlock(const request* req);
     int handleMsg(msgType type, const char* msg, int srcFd); //다른 노드로부터 온 메시지를 requset구조체로 변경하여 enque
     
     int reqLock_broad(u_int id, int exceptSocket, time_t timeStamp); //주어진 소켓을 제외하고 lock요청, exceptSocket = -1 이라면 broadcast
     int reqLock_target(u_int id, int socket, time_t timeStamp); //reqLock을 특정 소켓에게만
     int allowLock_target(u_int id, int socket); //주어진 소켓에게 lock허용
-    int notifyUnlock_broad(u_int id, int exceptSocket); //주어진 소켓을 제외하고 unlock통보, exceptSocket = -1 이라면 broadcast
+
+    int addData(u_int id, u_int size);
 
     public:
     node(const char* inputParentIp, int parentPort, int myPort);
+
+    int acquireLock(u_int id); //실제 사용자가 lock을 요구
+    int releaseLock(u_int id); //얻은 lock을 해제
 };

@@ -10,6 +10,28 @@
 
 5. 최초로 req를 보낸 노드가 다른 모든 노드에게 allow를 받으면 state을 locked로 변경, lock취득
 
+***lock의 취득은 노드들 사이에서의 권한만을 관여함, 노드 내부에서 다른 프로세스들 사이의 lock은 제어되지 않음
+
+# 락 대기
+
+=> acquireLock으로 lock을 요청하고, 대기하는 동안 어떤식으로 대기할 것인가?
+
+a. whiel무한루프: 불필요한 cpu낭비?
+
+b. mutex사용
+
+    1. 사용자가 (특정 id 데이터에 대한)lock을 요구한다면 대상 id의 lock테이블이 대상에 대해 mtx_lock(앞서 서술된 lock과 다름)을 지님
+
+    2. lock을 요구할 때 이미 mtx_lock이 있다면 아무것도 안함
+
+    3. lock을 요구한 스레드는 mtx_lock을 요구한다.
+
+    4. lock이 취득되면 lock테이블에서는 mtx_unlock
+
+    => 자연스럽게 lock이 취득될 때 요청한 스레드에게 제어가 돌아옴
+
+    => 데이터의 lock과 lockTable에서의 mtx_lock은 서로 반대
+
 # reqLock의 충돌: 이미 reqLock을 보내고 allow를 대기하는 상황에서 새로운 reqLock이 도착
 
 a. 기존 req의 우선도가 높음, 새로운req는 대기 (문제X)
@@ -64,3 +86,29 @@ a. 우선도가 A < C < B 인 reqLock C가 오면 allowCnt를 감소시킨다. (
 => 데이터의 unlock을 굳이 다른 노드에게 알릴 필요는 없음, reqLock을 allow하지 않는 것 만으로도 lock을 지니고 있다는 것을 알릴 수 있음
 
 => 따라서 notifyUnlock은 필요없을 예정
+
+# 데이터의 추가/삭제/수정
+
+# 추가
+
+=> 새로운 값을 추가할 때 사용하는 id는 모든 노드가 동일해야함, shareData::maxId에 대해 따로 lock?
+
+# 삭제
+
+=> 기존 data를 삭제한다고 해서 id값이 다시 작아지지는 않음(like pid), 그렇다면 각 id에 대한 데이터를 어떻게 저장할 것인가?
+
+a. deque.at(id)
+
+=> 데이터의 삭제가 이루어지면 빈 공간이 발생, 메모리누수
+
+b. hashTable
+
+=> 데이터로의 상수 시간복잡도 접근 불가능
+
+c. linkedList
+
+=> 시간복잡도 O(n), hashTable 하위호환?
+
+# 수정
+
+=> lock을 취득한 노드가 특정 id 데이터에 대해 값을 수정 후 이를 전파, 상대적으로 간단
