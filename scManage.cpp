@@ -33,7 +33,7 @@ int scManage::newSrv(int port){
 	srvAddr.sin_port = htons(port);
 
     //bind
-    if(bind(srvFd, (struct sockaddr*)&srvAddr), sizeof(srvAddr) < 0){
+    if(bind(srvFd, (struct sockaddr*)&srvAddr, sizeof(srvAddr)) < 0){
         perror("bind");
         close(srvFd);
         return -1;
@@ -62,7 +62,7 @@ int scManage::newClnt(const char* ip, int port){
     clntAddr.sin_family = AF_INET;
 	clntAddr.sin_addr.s_addr = inet_addr(ip);
 	clntAddr.sin_port = htons(port);
-    if(connect(clntFd, (struct sockaddr*)*clntAddr, sizeof(clntAddr)) < 0){
+    if(connect(clntFd, (struct sockaddr*)&clntAddr, sizeof(clntAddr)) < 0){
         perror("connect");
         return -1;
     }
@@ -75,7 +75,7 @@ int scManage::startAccept(){
     int clntAddrLen;
     while(1){
         int newClientFd;
-        if(newClientFd=accept(srvFd, (struct sockaddr*)&clntAddr, &clntAddrLen) < 0){
+        if(newClientFd=accept(srvFd, (struct sockaddr*)&clntAddr, (socklen_t*)&clntAddrLen) < 0){
             perror("accept");
             return -1;
         }
@@ -83,10 +83,10 @@ int scManage::startAccept(){
     }
 }
 
-int scManage::broadcast(const char* msg, int size, list<int> fds){
+int scManage::broadcast(const char* msg, int size, deque<int> fds){
     int succNum=0;
-    for(int i = 0; i < sockets.size(); i++){
-        if(write(sockets[i], msg, size) < 0){
+    for(int i = 0; i < fds.size(); i++){
+        if(write(fds.at(i), msg, size) < 0){
             perror("write");
         }
         else{
@@ -97,21 +97,28 @@ int scManage::broadcast(const char* msg, int size, list<int> fds){
 }
 
 int scManage::spreadMsg(const char* msg, int size, int srcFd){
+    int succNum = 0;
+    int writeResult;
+
     if(srcFd == parentFd){ // 부모노드로부터 온 메시지
         return broadcast(msg, size, childFds); //모든 자식노드에게 전파
     }
     else{ //부모노드가 아님
-        for(int i = 0; i < childFds.size(); i++) //srcFd가 아닌 모든 자식노드에게 전파
-            if(childFds[i] != srcFd && (write(childFds[i], msg, size) < 0)){
+        for(int i = 0; i < childFds.size(); i++){ //srcFd가 아닌 모든 자식노드에게 전파
+            if(childFds.at(i) == srcFd)
+                continue;
+            if((write(childFds.at(i), msg, size) < 0)){
                 perror("write");
                 return -1;
             }
+            succNum++;
+        }
         if(parentFd && write(parentFd, msg, size) < 0){ //부모노드 존재 && 부모노드에게 전파
             perror("write");
             return -1;
         }
 
-        return 1;
+        return succNum;
     }
 
     return -1;

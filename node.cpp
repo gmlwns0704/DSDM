@@ -15,7 +15,7 @@ int node::discountAllowCnt(int id){
     }
     else if(lockTable.at(id).allowCnt == 0){ //모든 allow 수신됨
         //최우선 req
-        reqTableNode* topReq = reqTable.at(req->id).top().second;
+        reqTableNode* topReq = reqTable.at(id).top().second;
         if(topReq->fd == -1){ //본인이 요청한 request가 allow됨
             /*해당 노드에서 lock 취득*/
             //해당 id의 데이터에 lock
@@ -41,9 +41,8 @@ int node::handleReqLock(time_t timeStamp, const request* req){
     reqTableNode* oldTop = reqTable.at(req->id).top().second;
     time_t oldTimeStamp = reqTable.at(req->id).top().first;
     //reqTable에 추가될 노드 생성
-    reqTableNode* newReq = malloc(sizeof(reqTableNode));
+    reqTableNode* newReq = (reqTableNode*)malloc(sizeof(reqTableNode));
     newReq->fd = req->fd;
-    newReq->sent = 0;
 
     //reqTable에 새 노드 추가
     reqTable.at(req->id).push({timeStamp, newReq});
@@ -63,7 +62,7 @@ int node::handleReqLock(time_t timeStamp, const request* req){
         //state을 변경하고 reqLock메시지 전파
         lockTable.at(req->id).state = waitFor;
         //reqLock을 전파받은 노드의 갯수
-        int spreadCnt = reqLock(req->id, req->fd, timeStamp);
+        int spreadCnt = reqLock_broad(req->id, req->fd, timeStamp);
         if(spreadCnt){
             //allowCnt설정
             lockTable.at(req->id).allowCnt = spreadCnt;
@@ -112,7 +111,7 @@ int node::handleReq(){
     time_t timeStamp = reqQ.top().first; //타임스탬프
     request* req = reqQ.top().second; //최우선 request
 
-    switch(req.type){
+    switch(req->type){
         case t_reqLock: handleReqLock(timeStamp, (const request*)req); break;
         case t_allowLock: handleAllowLock((const request*)req); break;
     }
@@ -124,24 +123,24 @@ int node::handleReq(){
 }
 
 int node::handleMsg(msgType type, const char* msg, int srcFd){
-    request req;
+    request* req = (request*)malloc(sizeof(request));
     time_t timeStamp;
     //타입에 영향받지 않는 request값 설정
-    req.fd = srcFd;
-    req.type = type;
+    req->fd = srcFd;
+    req->type = type;
 
     // 타입에 따른 request값 설정
     switch(type){
         // msg값 읽기
         case t_reqLock:{
-            req.id = *((msgReqLock*)msg)->id;
-            timeStamp = *((msgReqLock*)msg)->t;
+            req->id = ((msgReqLock*)msg)->id;
+            timeStamp = ((msgReqLock*)msg)->t;
             // 해당 request를 타임스탬프와 함께 저장
-            reqQ.push({timeStamp, req});
+            reqQ.push(pair<time_t, request*>(timeStamp, req));
         }
         break;
         case t_allowLock:{
-            req.id = *((msgAllowLock*)msg)->id;
+            req->id = ((msgAllowLock*)msg)->id;
             // 해당 request를 타임스탬프와 함께 저장
             reqQ.push({timeStamp, req});
         }
@@ -170,7 +169,7 @@ int node::reqLock_broad(u_int id, int exceptSocket, time_t timeStamp){
     ((msgReqLock*)msgPtr)->id = id;
 
     // 메시지 뿌리기
-    return scm.spreadMsg(msg, size, exceptSocket);
+    return scm->spreadMsg(msg, size, exceptSocket);
 }
 
 int node::reqLock_target(u_int id, int socket, time_t timeStamp){
@@ -208,33 +207,16 @@ int node::allowLock_target(u_int id, int socket){
     return write(socket, msg, size);
 }
 
-int node::notifyUnlock_broad(u_int id, int exceptSocket){
-    int size = sizeof(msgHeader) + sizeof(msgNotifyUnlock); //패킷의 총 크기 헤더+보디
-    char msg[sizeof(msgHeader) + sizeof(msgNotifyUnlock)]; //버퍼 생성
-    char* msgPtr = msg;
-
-    //헤더 설정
-    ((msgHeader*)msgPtr)->size = size - sizeof(msgHeader); //메시지 크기 입력(헤더크기제외)
-    ((msgHeader*)msgPtr)->type = t_notifyUnlock; //메시지 타입 설정
-    
-    //보디 설정
-    msgPtr += sizeof(msgHeader);
-    ((msgNotifyUnlock*)msgPtr)->id = id;
-
-    // 메시지 뿌리기
-    return scm.spreadMsg(msg, size, exceptSocket);
-}
-
 int node::addData(u_int id, u_int size){
 
 }
 
 /*public*/
 node::node(const char* inputParentIp, int parentPort, int myPort){
-    this->scm=new scManage(myPort); //소켓매니저 인스턴스 생성
+    this->scm = new scManage(myPort); //소켓매니저 인스턴스 생성
     this->isRoot=(!inputParentIp); //루트노드 여부 결정(inputParentIp가 NULL이라면 루트노드)
     if(!(this->isRoot)){//루트가 아니라면 부모노드에 연결
-        this->scm.connectParent(inputParentIp, parentPort);
+        this->scm->connectParent(inputParentIp, parentPort);
     }
 }
 
@@ -245,7 +227,7 @@ int node::acquireLock(u_int id){
     }
 
     time_t timsStamp = time(NULL); //현재 시간
-    reqTableNode* newReq = malloc(sizeof(reqTableNode)); //새로 push될 req
+    reqTableNode* newReq = (reqTableNode*)malloc(sizeof(reqTableNode)); //새로 push될 req
     newReq->fd = -1; //이 노드에서 시작됐음을 알림
 
     reqTable.at(id).push({timsStamp, newReq}); //reqTable에 push

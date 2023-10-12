@@ -3,6 +3,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include<arpa/inet.h>
+#include<unistd.h>
 #include<pthread.h>
 
 #include<string>
@@ -53,7 +54,7 @@ typedef struct lockTableNode{
 class node{
     private:
     bool isRoot; //root노드 여부(부모없음)
-    scManage scm; //소켓 관련 기능 종합
+    scManage* scm; //소켓 관련 기능 종합
     //lockReq에 대한 요청 큐, <타임스탬프, request>
     //vector와 greater는 큐를 오름차순으로 정렬하기 위함
     priority_queue<pair<time_t, request*>, vector<pair<time_t, request*>>, cmpOnlyFirst> reqQ;
@@ -65,7 +66,7 @@ class node{
     //공유되는 데이터 목록
     deque<shareData*> dataTable;
 
-    int discountAllowCnt(int id) //allowCnt를 1 감소시키고 결과값에 따른 적절한 대응까지
+    int discountAllowCnt(int id); //allowCnt를 1 감소시키고 결과값에 따른 적절한 대응까지
     
     int handleReq(); //reqQ에서 다음 req를 처리
     int handleReqLock(time_t timeStamp, const request* req); //reqLock req에 대해서 적절한 대응

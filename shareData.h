@@ -11,7 +11,7 @@ class shareData{
     private:
     u_int id;
 
-    static u_int maxId = 0;
+    static u_int maxId;
     void* memory; //실제 데이터가 저장되는 메모리
     u_int size; //데이터 사이즈
 

@@ -1,11 +1,14 @@
 #pragma once
 #include<stdio.h>
 #include<stdlib.h>
-#include<sys/socket.h>
-#include<netinet/in.h>
+#include<string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include<unistd.h>
 
 #include<iostream>
-#include<list>
+#include<queue>
 #include<algorithm>
 
 #include"communicate.h"
@@ -27,7 +30,7 @@ class scManage{
 
     int connectParent(const char* ip, int port); //부모 노드에게 연결
     int startAccept(); //child노드 accept시작
-    int broadcast(const char* msg, int size, list<int> fds); //해당 소켓 리스트에게 메시지 뿌리기
+    int broadcast(const char* msg, int size, deque<int> fds); //해당 소켓 리스트에게 메시지 뿌리기
     int spreadMsg(const char* msg, int size, int srcFd); //특정 fd로부터 온 메시지를 적절하게 전파
     
 };
