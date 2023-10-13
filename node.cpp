@@ -4,24 +4,24 @@
 /*private*/
 
 int node::discountAllowCnt(int id){
-    if(lockTable.at(id).allowCnt <= 0){ //allowCnt는 이미 0이거나 그보다 작음
+    if(lockTable.at(id)->allowCnt <= 0){ //allowCnt는 이미 0이거나 그보다 작음
         return -1;
     }
     //allowCnt 업데이트
-    lockTable.at(id).allowCnt -= 1;
+    lockTable.at(id)->allowCnt -= 1;
     
-    if(lockTable.at(id).allowCnt > 0){ //해당 id는 기다리던 allow가 있음
-        return lockTable.at(id).allowCnt;
+    if(lockTable.at(id)->allowCnt > 0){ //해당 id는 기다리던 allow가 있음
+        return lockTable.at(id)->allowCnt;
     }
-    else if(lockTable.at(id).allowCnt == 0){ //모든 allow 수신됨
+    else if(lockTable.at(id)->allowCnt == 0){ //모든 allow 수신됨
         //최우선 req
         reqTableNode* topReq = reqTable.at(id).top().second;
         if(topReq->fd == -1){ //본인이 요청한 request가 allow됨
             /*해당 노드에서 lock 취득*/
             //해당 id의 데이터에 lock
-            lockTable.at(id).state = locked;
+            lockTable.at(id)->state = locked;
             //mtx를 unlock해서 사용자가 마침내 데이터에 접근 가능
-            pthread_mutex_unlock(lockTable.at(id).mtx);
+            pthread_mutex_unlock(lockTable.at(id)->mtx);
         }
         else{
             //해당 req를 전송한 노드에게 allow
@@ -47,7 +47,7 @@ int node::handleReqLock(time_t timeStamp, const request* req){
     //reqTable에 새 노드 추가
     reqTable.at(req->id).push({timeStamp, newReq});
     //해당 id의 락 상태
-    int state = lockTable.at(req->id).state;
+    int state = lockTable.at(req->id)->state;
 
     //다른 노드 어딘가에 우선순위가 높은 reqLock이 발생했다면
     //현재 노드가 locked상태가 되는 것은 불가능하다.
@@ -60,12 +60,12 @@ int node::handleReqLock(time_t timeStamp, const request* req){
     //state==unLocked, 대기중인 req조차 없음
     else if(state == unLocked){
         //state을 변경하고 reqLock메시지 전파
-        lockTable.at(req->id).state = waitFor;
+        lockTable.at(req->id)->state = waitFor;
         //reqLock을 전파받은 노드의 갯수
         int spreadCnt = reqLock_broad(req->id, req->fd, timeStamp);
         if(spreadCnt){
             //allowCnt설정
-            lockTable.at(req->id).allowCnt = spreadCnt;
+            lockTable.at(req->id)->allowCnt = spreadCnt;
         }
         //reqLock을 전파받은 노드가 없음
         else{
@@ -96,7 +96,7 @@ int node::handleReqLock(time_t timeStamp, const request* req){
 }
 
 int node::handleAllowLock(const request* req){
-    if(lockTable.at(req->id).state == unLocked){ //state == unLock, 아무런 req가 없는데 allow가 도착함
+    if(lockTable.at(req->id)->state == unLocked){ //state == unLock, 아무런 req가 없는데 allow가 도착함
         fprintf(stderr, "E: got allowLock but no req\n");
         return -1;
     }
@@ -207,10 +207,6 @@ int node::allowLock_target(u_int id, int socket){
     return write(socket, msg, size);
 }
 
-int node::addData(u_int id, u_int size){
-
-}
-
 /*public*/
 node::node(const char* inputParentIp, int parentPort, int myPort){
     this->scm = new scManage(myPort); //소켓매니저 인스턴스 생성
@@ -218,10 +214,11 @@ node::node(const char* inputParentIp, int parentPort, int myPort){
     if(!(this->isRoot)){//루트가 아니라면 부모노드에 연결
         this->scm->connectParent(inputParentIp, parentPort);
     }
+    this->sdm = new shareData(); //데이터매니저 인스턴스
 }
 
 int node::acquireLock(u_int id){
-    if(lockTable.at(id).state == locked){
+    if(lockTable.at(id)->state == locked){
         fprintf(stderr, "E: this id is already locked\n");
         return -1;
     }
@@ -233,6 +230,61 @@ int node::acquireLock(u_int id){
     reqTable.at(id).push({timsStamp, newReq}); //reqTable에 push
 
     //lockTable이 locked state이 되고 mtx를 unlock할때까지 대기
-    pthread_mutex_t* mtx = lockTable.at(id).mtx;
+    pthread_mutex_t* mtx = lockTable.at(id)->mtx;
     pthread_mutex_lock(mtx);
+}
+
+int node::lockData(u_int id){
+    pthread_mutex_t* mtx = lockTable.at(id)->mtx;
+    int tryLockResult = pthread_mutex_trylock(mtx);
+    if(tryLockResult == 0){
+        //이미 mtx가 unlock상태임, 이 노드가 해당 데이터에 lock을 지님
+        pthread_mutex_unlock(mtx);
+        return -1;
+    }
+    else if(tryLockResult == EBUSY){
+        //이미 mtx가 lock상태임, lockTable이 mtx를 lock하고있음, unlock까지 대기
+        pthread_mutex_lock(mtx); //lockTable의 mtx의 unlock대기
+        pthread_mutex_unlock(mtx); //lock을 취득하면 일단 다시 unlock, mtx의 unlock상태는 노드가 해당 id데이터를 lock했다는 의미이므로
+        return 0;
+    }
+    else{
+        return -1;
+    }
+}
+
+int node::unlockData(u_int id){
+    pthread_mutex_t* mtx = lockTable.at(id)->mtx;
+    int tryLockResult = pthread_mutex_trylock(mtx);
+    if(tryLockResult == 0){
+        //이미 mtx가 unlock상태임, 이 노드가 해당 데이터에 lock을 지님, 노드 unlock
+        if(reqTable.at(id).size() == 0){ //대기중인 다음 req없음
+            lockTable.at(id)->state = unLocked;
+        }
+        else{ //다음 req존재, 해당 req 처리
+            int targetFd = reqTable.at(id).top().second->fd;
+            time_t timeStamp = reqTable.at(id).top().first;
+            lockTable.at(id)->state = waitFor;
+            //reqLock을 전파받은 노드의 갯수
+            int spreadCnt = reqLock_broad(id, targetFd, timeStamp);
+            if(spreadCnt){
+                //allowCnt설정
+                lockTable.at(id)->allowCnt = spreadCnt;
+            }
+            //reqLock을 전파받은 노드가 없음
+            else{
+                //reqLock을 전송한 노드에게 즉시 allow
+                allowLock_target(id, targetFd);
+                reqTable.at(id).pop();
+            }
+        }
+        return 0;
+    }
+    else if(tryLockResult == EBUSY){
+        //이미 mtx가 lock상태임, lockTable이 mtx를 lock하고있음, 노드는 unlock상태
+        return -1;
+    }
+    else{
+        return -1;
+    }
 }

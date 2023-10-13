@@ -6,19 +6,21 @@
 
 using namespace std;
 
+typedef struct mem{
+    void* memory; //동적할당 메모리
+    u_int size; //메모리 크기
+    bool available; //데이터의 사용 여부 표시
+} mem;
+
 //객체 하나는 data하나
 class shareData{
     private:
-    u_int id;
-
-    static u_int maxId;
-    void* memory; //실제 데이터가 저장되는 메모리
-    u_int size; //데이터 사이즈
+    deque<mem*> memories; //메모리들의 배열
 
     public:
-    u_int getMaxId(){
-        return shareData::maxId;
-    }
-    shareData(u_int inputSize);
-    int setData(void* newData, u_int inputSize); //데이터 값 변경
+    shareData();
+    int addData(u_int size);
+    int rmData(u_int id);
+    int setData(u_int id, const void* value, u_int size);
+    const void* getData(u_int id);
 };

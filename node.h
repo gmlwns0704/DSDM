@@ -55,6 +55,7 @@ class node{
     private:
     bool isRoot; //root노드 여부(부모없음)
     scManage* scm; //소켓 관련 기능 종합
+    shareData* sdm; //데이터 관리 기능 종합
     //lockReq에 대한 요청 큐, <타임스탬프, request>
     //vector와 greater는 큐를 오름차순으로 정렬하기 위함
     priority_queue<pair<time_t, request*>, vector<pair<time_t, request*>>, cmpOnlyFirst> reqQ;
@@ -62,9 +63,7 @@ class node{
     //향후 hash table로 변경할 것 고려
     deque<priority_queue<pair<time_t, reqTableNode*>, vector<pair<time_t, reqTableNode*>>, cmpOnlyFirst>> reqTable;
     //데이터에 대한 lockTable, Data_i의 lock정보는 lockTable[i]
-    deque<lockTableNode> lockTable;
-    //공유되는 데이터 목록
-    deque<shareData*> dataTable;
+    deque<lockTableNode*> lockTable;
 
     int discountAllowCnt(int id); //allowCnt를 1 감소시키고 결과값에 따른 적절한 대응까지
     
@@ -77,11 +76,13 @@ class node{
     int reqLock_target(u_int id, int socket, time_t timeStamp); //reqLock을 특정 소켓에게만
     int allowLock_target(u_int id, int socket); //주어진 소켓에게 lock허용
 
-    int addData(u_int id, u_int size);
-
     public:
     node(const char* inputParentIp, int parentPort, int myPort);
 
     int acquireLock(u_int id); //실제 사용자가 lock을 요구
     int releaseLock(u_int id); //얻은 lock을 해제
+
+    int lockData(u_int id);
+    int unlockData(u_int id);
+    int addData(u_int id, u_int size);
 };
