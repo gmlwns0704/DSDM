@@ -27,4 +27,4 @@ typedef struct msgUpdate{ //값의 업데이트
     u_int id;
     u_int size; //뒤에 따라붙을 update된 데이터의 크기
     /*updated 값은 별도로 이어붙임, 사실상 헤더*/
-}
+};

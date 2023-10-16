@@ -148,7 +148,9 @@ int node::handleMsg(msgType type, const char* msg, int srcFd){
         case t_update:{
             //값 업데이트
         }
+        break;
         default:
+            fprintf(stderr, "E: undefined type of message %d\n", type);
         break;
     }
     return 0;
@@ -207,6 +209,26 @@ int node::allowLock_target(u_int id, int socket){
     return write(socket, msg, size);
 }
 
+lockTableNode* node::allocLTN(){
+    lockTableNode* newNode = (lockTableNode*)malloc(sizeof(lockTableNode));
+    pthread_mutex_t* mtx = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t));
+    pthread_mutex_init(mtx, NULL);
+    newNode->allowCnt = 0;
+    newNode->mtx = mtx;
+    newNode->state = unLocked;
+
+    return newNode;
+}
+
+int node::freeLTN(lockTableNode* node){
+    if(pthread_mutex_destroy(node->mtx) < 0)
+        return -1;
+    free(node->mtx);
+    free(node);
+
+    return 0;
+}
+
 /*public*/
 node::node(const char* inputParentIp, int parentPort, int myPort){
     this->scm = new scManage(myPort); //소켓매니저 인스턴스 생성
@@ -219,7 +241,7 @@ node::node(const char* inputParentIp, int parentPort, int myPort){
 
 int node::acquireLock(u_int id){
     if(lockTable.at(id)->state == locked){
-        fprintf(stderr, "E: this id is already locked\n");
+        fprintf(stderr, "E: this id %d is already locked\n", id);
         return -1;
     }
 
@@ -229,23 +251,29 @@ int node::acquireLock(u_int id){
 
     reqTable.at(id).push({timsStamp, newReq}); //reqTable에 push
 
-    //lockTable이 locked state이 되고 mtx를 unlock할때까지 대기
+    //lockTable이 locked state이 되면서 mtx를 unlock할때까지 대기
     pthread_mutex_t* mtx = lockTable.at(id)->mtx;
     pthread_mutex_lock(mtx);
+
+    return 0;
+}
+
+int node::releaseLock(u_int id){
+    unlockData(id);
 }
 
 int node::lockData(u_int id){
-    pthread_mutex_t* mtx = lockTable.at(id)->mtx;
-    int tryLockResult = pthread_mutex_trylock(mtx);
+    pthread_mutex_t* mtxPtr = lockTable.at(id)->mtx;
+    int tryLockResult = pthread_mutex_trylock(mtxPtr);
     if(tryLockResult == 0){
         //이미 mtx가 unlock상태임, 이 노드가 해당 데이터에 lock을 지님
-        pthread_mutex_unlock(mtx);
+        pthread_mutex_unlock(mtxPtr);
         return -1;
     }
     else if(tryLockResult == EBUSY){
         //이미 mtx가 lock상태임, lockTable이 mtx를 lock하고있음, unlock까지 대기
-        pthread_mutex_lock(mtx); //lockTable의 mtx의 unlock대기
-        pthread_mutex_unlock(mtx); //lock을 취득하면 일단 다시 unlock, mtx의 unlock상태는 노드가 해당 id데이터를 lock했다는 의미이므로
+        pthread_mutex_lock(mtxPtr); //lockTable의 mtx의 unlock대기
+        pthread_mutex_unlock(mtxPtr); //lock을 취득하면 일단 다시 unlock, mtx의 unlock상태는 노드가 해당 id데이터를 lock했다는 의미이므로
         return 0;
     }
     else{
@@ -254,37 +282,84 @@ int node::lockData(u_int id){
 }
 
 int node::unlockData(u_int id){
-    pthread_mutex_t* mtx = lockTable.at(id)->mtx;
-    int tryLockResult = pthread_mutex_trylock(mtx);
-    if(tryLockResult == 0){
-        //이미 mtx가 unlock상태임, 이 노드가 해당 데이터에 lock을 지님, 노드 unlock
-        if(reqTable.at(id).size() == 0){ //대기중인 다음 req없음
-            lockTable.at(id)->state = unLocked;
-        }
-        else{ //다음 req존재, 해당 req 처리
-            int targetFd = reqTable.at(id).top().second->fd;
-            time_t timeStamp = reqTable.at(id).top().first;
-            lockTable.at(id)->state = waitFor;
-            //reqLock을 전파받은 노드의 갯수
-            int spreadCnt = reqLock_broad(id, targetFd, timeStamp);
-            if(spreadCnt){
-                //allowCnt설정
-                lockTable.at(id)->allowCnt = spreadCnt;
-            }
-            //reqLock을 전파받은 노드가 없음
-            else{
-                //reqLock을 전송한 노드에게 즉시 allow
-                allowLock_target(id, targetFd);
-                reqTable.at(id).pop();
-            }
-        }
-        return 0;
-    }
-    else if(tryLockResult == EBUSY){
-        //이미 mtx가 lock상태임, lockTable이 mtx를 lock하고있음, 노드는 unlock상태
+    lockTableNode* targetNode = lockTable.at(id);
+    if(targetNode->state != locked){
+        fprintf(stderr, "E: %d is not locked\n", id);
         return -1;
     }
-    else{
+
+    //이미 mtx가 unlock상태임, 이 노드가 해당 데이터에 lock을 지님, 노드 unlock
+    if(reqTable.at(id).size() == 0){ //대기중인 다음 req없음
+        lockTable.at(id)->state = unLocked;
+    }
+    else{ //다음 req존재, 해당 req 처리
+        int targetFd = reqTable.at(id).top().second->fd;
+        time_t timeStamp = reqTable.at(id).top().first;
+        lockTable.at(id)->state = waitFor;
+        //reqLock을 전파받은 노드의 갯수
+        int spreadCnt = reqLock_broad(id, targetFd, timeStamp);
+        if(spreadCnt){
+            //allowCnt설정
+            lockTable.at(id)->allowCnt = spreadCnt;
+        }
+        //reqLock을 전파받은 노드가 없음
+        else{
+            //reqLock을 전송한 노드에게 즉시 allow
+            allowLock_target(id, targetFd);
+            reqTable.at(id).pop();
+        }
+    }
+
+    // data unlock이후 mtx lock
+    pthread_mutex_lock(targetNode->mtx);
+    return 0;
+}
+
+int node::addData(u_int size){
+    int resultId = sdm->addData(size);
+    int maxId = sdm->getDataNum();
+    if(resultId < 0){
+        fprintf(stderr, "E: addData failed\n");
         return -1;
     }
+    if(lockTable.size()+1 == maxId){
+        //새로운 id의 데이터
+        lockTable.push_back(allocLTN());
+    }
+    else if(lockTable.size() == maxId){
+        //maxId가 아닌 id 할당됨resultId의 lockTable에 대하여 검사
+        lockTableNode* targetNode = lockTable.at(resultId);
+        if(targetNode->state != empty){
+            fprintf(stderr, "E: addData failed, %d is not empty id\n", resultId);
+            return -1;
+        }
+        targetNode->state = unLocked;
+    }
+    return resultId;
+}
+
+int node::rmData(u_int id){
+    lockTableNode* targetNode = lockTable.at(id);
+    //데이터 제거
+    if(sdm->rmData(id) < 0){
+        fprintf(stderr, "E: rmData failed\n");
+        return -1;
+    }
+
+    if(id >= lockTable.size()){
+        fprintf(stderr, "E: invalid id, (input:%d, number of Id:%d)\n", id, lockTable.size());
+        return -1;
+    }
+    else if(targetNode->state == empty){
+        fprintf(stderr, "E: id %d is empty\n", id);
+        return -1;
+    }
+
+    //maxId데이터라면 pop
+    if(id == lockTable.size()-1){
+        lockTable.pop_back();
+    }
+    
+    //free
+    return freeLTN(targetNode);
 }

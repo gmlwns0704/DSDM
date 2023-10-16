@@ -41,12 +41,13 @@ typedef struct reqTableNode{
 typedef enum state{
     unLocked = 0, //lock 없음, 대기중인 allowLock도 없음
     waitFor, //allowLock을 대기중
-    locked //locked
+    locked, //locked
+    empty //할당된 데이터 없음
 } state;
 
-typedef struct lockTableNode{
+typedef struct lockTableNode{ //(LTN)
     state state; //lock여부
-    int fd; //lock메시지를 보냈던 fd
+    // int removeTHIS; //lock메시지를 보냈던 fd
     int allowCnt; //lock이 성립되기 위한 allow의 필요 갯수
     pthread_mutex_t* mtx; //이 노드에서 해당 데이터의 lock을 관리하기 위한 노드
 } lockTableNode;
@@ -76,6 +77,9 @@ class node{
     int reqLock_target(u_int id, int socket, time_t timeStamp); //reqLock을 특정 소켓에게만
     int allowLock_target(u_int id, int socket); //주어진 소켓에게 lock허용
 
+    lockTableNode* allocLTN();
+    int freeLTN(lockTableNode* node);
+
     public:
     node(const char* inputParentIp, int parentPort, int myPort);
 
@@ -84,5 +88,6 @@ class node{
 
     int lockData(u_int id);
     int unlockData(u_int id);
-    int addData(u_int id, u_int size);
+    int addData(u_int size);
+    int rmData(u_int id);
 };

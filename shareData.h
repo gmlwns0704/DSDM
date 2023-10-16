@@ -23,4 +23,8 @@ class shareData{
     int rmData(u_int id);
     int setData(u_int id, const void* value, u_int size);
     const void* getData(u_int id);
+
+    int getDataNum(){
+        return memories.size();
+    }
 };
