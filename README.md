@@ -1,3 +1,7 @@
+# 다음에 할 것
+
+1. class node에 너무 많은것이 모여있음, lockTable관련 소스를 새로운 클래스로 구분하기
+
 # 락 취득
 
 1. 주변 노드에게 특정 id의 데이터에 대한 lock을 reqLock하고 state을 waitfor로 변경
