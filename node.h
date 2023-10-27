@@ -65,6 +65,8 @@ class node{
     deque<priority_queue<pair<time_t, reqTableNode*>, vector<pair<time_t, reqTableNode*>>, cmpOnlyFirst>> reqTable;
     //데이터에 대한 lockTable, Data_i의 lock정보는 lockTable[i]
     deque<lockTableNode*> lockTable;
+    //lockTabkle에 대한 lock, 이 또한 lockTable에 존재하지만 쉬운 접근을 위해 별도 변수 생성
+    lockTableNode* lockTableLock;
 
     int discountAllowCnt(int id); //allowCnt를 1 감소시키고 결과값에 따른 적절한 대응까지
     
@@ -80,14 +82,17 @@ class node{
     lockTableNode* allocLTN();
     int freeLTN(lockTableNode* node);
 
+    int lockData(u_int id); //내부적으로 데이터를 lock하고 대기
+    int unlockData(u_int id); //lock된 데이터를  unlock, 대기중이던 req도 처리
+
     public:
     node(const char* inputParentIp, int parentPort, int myPort);
 
-    int acquireLock(u_int id); //실제 사용자가 lock을 요구
+    int acquireLock(u_int id); //해당 데이터에 대해 lock을 요청하고 lock이 올때까지 대기
     int releaseLock(u_int id); //얻은 lock을 해제
 
-    int lockData(u_int id);
-    int unlockData(u_int id);
     int addData(u_int size);
     int rmData(u_int id);
+
+    int addEmtpyLock(); //메모리를 차지하는 데이터는 없는, 동기화만을 위한 lock생성
 };

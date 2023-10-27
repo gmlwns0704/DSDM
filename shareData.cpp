@@ -6,6 +6,7 @@ shareData::shareData(){
 int shareData::addData(u_int size){
     int i = 0;
     int maxId = memories.size();
+    //available 인덱스 찾기
     while(i < maxId && memories.at(i)->available){i++;}
 
     mem* newData = (mem*)malloc(sizeof(mem));
@@ -17,7 +18,8 @@ int shareData::addData(u_int size){
     else if(i < maxId){ //큐의 중간에 대체
         memories.at(i)->available = 1;
         memories.at(i)->size = size;
-        memories.at(i)->memory = malloc(size);
+        //size가 0이라면 malloc안함
+        if(size){memories.at(i)->memory = malloc(size);}
     }
     else{ //예상되지 못한 값
         fprintf(stderr, "E: unavailabel id (newId:%d/maxId:%d)\n", i, maxId);
@@ -36,7 +38,8 @@ int shareData::rmData(u_int id){
         return -1;
     }
 
-    free(target->memory);
+    //size가 0이라면 free 필요없음
+    if(target->size){free(target->memory);}
     target->available = 0;
 
     return 0;

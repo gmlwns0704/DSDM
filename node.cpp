@@ -33,7 +33,7 @@ int node::discountAllowCnt(int id){
         return 0;
     }
 
-    return -1; //도달 불가
+    return -1; //일반적으로 도달 불가
 }
 
 int node::handleReqLock(time_t timeStamp, const request* req){
@@ -229,39 +229,6 @@ int node::freeLTN(lockTableNode* node){
     return 0;
 }
 
-/*public*/
-node::node(const char* inputParentIp, int parentPort, int myPort){
-    this->scm = new scManage(myPort); //소켓매니저 인스턴스 생성
-    this->isRoot=(!inputParentIp); //루트노드 여부 결정(inputParentIp가 NULL이라면 루트노드)
-    if(!(this->isRoot)){//루트가 아니라면 부모노드에 연결
-        this->scm->connectParent(inputParentIp, parentPort);
-    }
-    this->sdm = new shareData(); //데이터매니저 인스턴스
-}
-
-int node::acquireLock(u_int id){
-    if(lockTable.at(id)->state == locked){
-        fprintf(stderr, "E: this id %d is already locked\n", id);
-        return -1;
-    }
-
-    time_t timsStamp = time(NULL); //현재 시간
-    reqTableNode* newReq = (reqTableNode*)malloc(sizeof(reqTableNode)); //새로 push될 req
-    newReq->fd = -1; //이 노드에서 시작됐음을 알림
-
-    reqTable.at(id).push({timsStamp, newReq}); //reqTable에 push
-
-    //lockTable이 locked state이 되면서 mtx를 unlock할때까지 대기
-    pthread_mutex_t* mtx = lockTable.at(id)->mtx;
-    pthread_mutex_lock(mtx);
-
-    return 0;
-}
-
-int node::releaseLock(u_int id){
-    unlockData(id);
-}
-
 int node::lockData(u_int id){
     pthread_mutex_t* mtxPtr = lockTable.at(id)->mtx;
     int tryLockResult = pthread_mutex_trylock(mtxPtr);
@@ -313,6 +280,43 @@ int node::unlockData(u_int id){
     // data unlock이후 mtx lock
     pthread_mutex_lock(targetNode->mtx);
     return 0;
+}
+
+/*public*/
+node::node(const char* inputParentIp, int parentPort, int myPort){
+    this->scm = new scManage(myPort); //소켓매니저 인스턴스 생성
+    
+    this->isRoot=(!inputParentIp); //루트노드 여부 결정(inputParentIp가 NULL이라면 루트노드)
+    if(!(this->isRoot)){//루트가 아니라면 부모노드에 연결
+        this->scm->connectParent(inputParentIp, parentPort);
+    }
+
+    this->sdm = new shareData(); //데이터매니저 인스턴스
+    this->lockTableLock = lockTable.at(this->sdm->addData(0)); //lockTable을 위한 lock 설정
+}
+
+int node::acquireLock(u_int id){
+    if(lockTable.at(id)->state == locked){
+        fprintf(stderr, "E: this id %d is already locked\n", id);
+        return -1;
+    }
+
+    time_t timsStamp = time(NULL); //현재 시간
+    reqTableNode* newReq = (reqTableNode*)malloc(sizeof(reqTableNode)); //새로 push될 req
+    newReq->fd = -1; //이 노드에서 시작됐음을 알림
+
+    reqTable.at(id).push({timsStamp, newReq}); //reqTable에 push
+
+    //lockTable이 locked state이 되면서 mtx를 unlock할때까지 대기
+    return lockData(id);
+}
+
+int node::releaseLock(u_int id){
+    if(lockTable.at(id)->state != locked){
+        fprintf(stderr, "E: this id %d is not locked\n", id);
+        return -1;
+    }
+    return unlockData(id);
 }
 
 int node::addData(u_int size){
