@@ -3,6 +3,9 @@
 using namespace std;
 
 scManage::scManage(int inputSrvPort){
+    #ifdef DBG
+    fprintf(stderr, "DBG: scm created\n");
+    #endif
     this->srvPort=inputSrvPort;
     this->srvFd=newSrv(this->srvPort);
     this->parentFd=0; //부모를 따로 연결하지 않으면 0, root라는 의미
@@ -12,7 +15,7 @@ scManage::scManage(int inputSrvPort){
 }
 
 int scManage::connectParent(const char* ip, int port){
-    this->parentFd=newClnt(ip, port);
+    return this->parentFd=newClnt(ip, port);
 }
 
 /*새로운 서버 소켓 생성*/

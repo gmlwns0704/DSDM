@@ -7,7 +7,6 @@
 #include<pthread.h>
 
 #include<string>
-#include<iostream>
 #include<queue>
 
 #include"scManage.h"
@@ -22,11 +21,13 @@ typedef struct request{
     u_int id; //대상이 되는 데이터 id
 } request;
 
-typedef struct cmpOnlyFirst {
-    bool operator()(const std::pair<time_t, struct request>& a, const std::pair<time_t, struct request>& b) {
+class Compare {
+public:
+    template <typename none>
+    bool operator()(const std::pair<time_t, none> a, const std::pair<time_t, none> b) {
         return a.first > b.first;  // time_t의 오름차순
     }
-} cmpOnlyFirst;
+};
 
 typedef struct reqTableNode{
     //reqLock을 보냈던 fd, -1이라면 이 노드가 근원지
@@ -46,7 +47,7 @@ typedef enum state{
 } state;
 
 typedef struct lockTableNode{ //(LTN)
-    state state; //lock여부
+    state st; //lock여부
     // int removeTHIS; //lock메시지를 보냈던 fd
     int allowCnt; //lock이 성립되기 위한 allow의 필요 갯수
     pthread_mutex_t* mtx; //이 노드에서 해당 데이터의 lock을 관리하기 위한 노드
@@ -59,10 +60,10 @@ class node{
     shareData* sdm; //데이터 관리 기능 종합
     //lockReq에 대한 요청 큐, <타임스탬프, request>
     //vector와 greater는 큐를 오름차순으로 정렬하기 위함
-    priority_queue<pair<time_t, request*>, vector<pair<time_t, request*>>, cmpOnlyFirst> reqQ;
+    priority_queue<pair<time_t, request*>, vector<pair<time_t, request*>>, Compare> reqQ;
     //데이터에 대한 lockTable, Data_i의 reqLock정보는 reqTable[i]
     //향후 hash table로 변경할 것 고려
-    deque<priority_queue<pair<time_t, reqTableNode*>, vector<pair<time_t, reqTableNode*>>, cmpOnlyFirst>> reqTable;
+    deque<priority_queue<pair<time_t, reqTableNode*>, vector<pair<time_t, reqTableNode*>>, Compare>> reqTable;
     //데이터에 대한 lockTable, Data_i의 lock정보는 lockTable[i]
     deque<lockTableNode*> lockTable;
     //lockTabkle에 대한 lock, 이 또한 lockTable에 존재하지만 쉬운 접근을 위해 별도 변수 생성

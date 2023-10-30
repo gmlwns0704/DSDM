@@ -19,7 +19,7 @@ int node::discountAllowCnt(int id){
         if(topReq->fd == -1){ //본인이 요청한 request가 allow됨
             /*해당 노드에서 lock 취득*/
             //해당 id의 데이터에 lock
-            lockTable.at(id)->state = locked;
+            lockTable.at(id)->st = locked;
             //mtx를 unlock해서 사용자가 마침내 데이터에 접근 가능
             pthread_mutex_unlock(lockTable.at(id)->mtx);
         }
@@ -47,7 +47,7 @@ int node::handleReqLock(time_t timeStamp, const request* req){
     //reqTable에 새 노드 추가
     reqTable.at(req->id).push({timeStamp, newReq});
     //해당 id의 락 상태
-    int state = lockTable.at(req->id)->state;
+    int state = lockTable.at(req->id)->st;
 
     //다른 노드 어딘가에 우선순위가 높은 reqLock이 발생했다면
     //현재 노드가 locked상태가 되는 것은 불가능하다.
@@ -60,7 +60,7 @@ int node::handleReqLock(time_t timeStamp, const request* req){
     //state==unLocked, 대기중인 req조차 없음
     else if(state == unLocked){
         //state을 변경하고 reqLock메시지 전파
-        lockTable.at(req->id)->state = waitFor;
+        lockTable.at(req->id)->st = waitFor;
         //reqLock을 전파받은 노드의 갯수
         int spreadCnt = reqLock_broad(req->id, req->fd, timeStamp);
         if(spreadCnt){
@@ -96,7 +96,7 @@ int node::handleReqLock(time_t timeStamp, const request* req){
 }
 
 int node::handleAllowLock(const request* req){
-    if(lockTable.at(req->id)->state == unLocked){ //state == unLock, 아무런 req가 없는데 allow가 도착함
+    if(lockTable.at(req->id)->st == unLocked){ //state == unLock, 아무런 req가 없는데 allow가 도착함
         fprintf(stderr, "E: got allowLock but no req\n");
         return -1;
     }
@@ -215,7 +215,7 @@ lockTableNode* node::allocLTN(){
     pthread_mutex_init(mtx, NULL);
     newNode->allowCnt = 0;
     newNode->mtx = mtx;
-    newNode->state = unLocked;
+    newNode->st = unLocked;
 
     return newNode;
 }
@@ -250,19 +250,19 @@ int node::lockData(u_int id){
 
 int node::unlockData(u_int id){
     lockTableNode* targetNode = lockTable.at(id);
-    if(targetNode->state != locked){
+    if(targetNode->st != locked){
         fprintf(stderr, "E: %d is not locked\n", id);
         return -1;
     }
 
     //이미 mtx가 unlock상태임, 이 노드가 해당 데이터에 lock을 지님, 노드 unlock
     if(reqTable.at(id).size() == 0){ //대기중인 다음 req없음
-        lockTable.at(id)->state = unLocked;
+        lockTable.at(id)->st = unLocked;
     }
     else{ //다음 req존재, 해당 req 처리
         int targetFd = reqTable.at(id).top().second->fd;
         time_t timeStamp = reqTable.at(id).top().first;
-        lockTable.at(id)->state = waitFor;
+        lockTable.at(id)->st = waitFor;
         //reqLock을 전파받은 노드의 갯수
         int spreadCnt = reqLock_broad(id, targetFd, timeStamp);
         if(spreadCnt){
@@ -284,6 +284,9 @@ int node::unlockData(u_int id){
 
 /*public*/
 node::node(const char* inputParentIp, int parentPort, int myPort){
+    #ifdef DBG
+    fprintf(stderr, "DBG: node created\n");
+    #endif
     this->scm = new scManage(myPort); //소켓매니저 인스턴스 생성
     
     this->isRoot=(!inputParentIp); //루트노드 여부 결정(inputParentIp가 NULL이라면 루트노드)
@@ -296,7 +299,7 @@ node::node(const char* inputParentIp, int parentPort, int myPort){
 }
 
 int node::acquireLock(u_int id){
-    if(lockTable.at(id)->state == locked){
+    if(lockTable.at(id)->st == locked){
         fprintf(stderr, "E: this id %d is already locked\n", id);
         return -1;
     }
@@ -312,7 +315,7 @@ int node::acquireLock(u_int id){
 }
 
 int node::releaseLock(u_int id){
-    if(lockTable.at(id)->state != locked){
+    if(lockTable.at(id)->st != locked){
         fprintf(stderr, "E: this id %d is not locked\n", id);
         return -1;
     }
@@ -333,11 +336,11 @@ int node::addData(u_int size){
     else if(lockTable.size() == maxId){
         //maxId가 아닌 id 할당됨resultId의 lockTable에 대하여 검사
         lockTableNode* targetNode = lockTable.at(resultId);
-        if(targetNode->state != empty){
+        if(targetNode->st != empty){
             fprintf(stderr, "E: addData failed, %d is not empty id\n", resultId);
             return -1;
         }
-        targetNode->state = unLocked;
+        targetNode->st = unLocked;
     }
     return resultId;
 }
@@ -351,10 +354,10 @@ int node::rmData(u_int id){
     }
 
     if(id >= lockTable.size()){
-        fprintf(stderr, "E: invalid id, (input:%d, number of Id:%d)\n", id, lockTable.size());
+        fprintf(stderr, "E: invalid id, (input:%d, number of Id:%lu)\n", id, lockTable.size());
         return -1;
     }
-    else if(targetNode->state == empty){
+    else if(targetNode->st == empty){
         fprintf(stderr, "E: id %d is empty\n", id);
         return -1;
     }
